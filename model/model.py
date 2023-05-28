@@ -4,6 +4,8 @@ import torch
 from torch.cuda.amp import autocast as autocast
 from einops import rearrange
 import torch.nn as nn
+import numpy as np
+from torchvision.ops import sigmoid_focal_loss
 try:
     from .blip2 import Blip2Base, disabled_train
     from .eva_vit import Trans_Block
@@ -71,7 +73,7 @@ class VSeg(Blip2Base):
 
         self.blocks = nn.ModuleList([
                 Trans_Block(dim = 512, num_heads = config.embedding_size//88, mlp_ratio= 4.3637)
-                    for i in range(10)])
+                    for i in range(5)])
         self.norm = nn.LayerNorm(config.embedding_size)
         self.fc_norm = nn.LayerNorm(config.embedding_size)
         self.fn1 =nn.Linear(1408,512)  #feature number from 1408 to 512
@@ -83,7 +85,8 @@ class VSeg(Blip2Base):
         self.score_head = nn.Linear(config.embedding_size, 1)
         self.max_txt_len = config.max_txt_len
         self.cache_data = []
-
+        # weights = [1.0, 100]
+    
     def vit_to_cpu(self):
         self.ln_vision.to("cpu")
         self.ln_vision.float()
@@ -142,10 +145,7 @@ class VSeg(Blip2Base):
         self.cache_data = []
         self.memory = None
     
-    def loss(self, x, y ):
-        loss_fn = nn.BCEWithLogitsLoss()
-        loss = loss_fn(x, y)
-        return loss
+
     
     def forward(self, interval_1):
         
@@ -176,7 +176,8 @@ class VSeg(Blip2Base):
         # print(x.shape)
         x = x[:, 0]
         x = self.head(x)
-       
+        x = torch.sigmoid(x)
+
         return x     
     
     
