@@ -25,7 +25,7 @@
       "extra_num_query_token": 64,
       "compare_hidden_size": 2048,
       "transformer_layers":10,
-      "frames":8,
+      "frames":5,
       "embedding_size":1408
     },
     "device": "cuda"

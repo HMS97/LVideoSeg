@@ -1,1 +1,6 @@
 *.pth
+./data/*
+data
+*.pyc
+.neptune/*
+neptune
