@@ -70,7 +70,7 @@ class VSeg(Blip2Base):
         #     seq_len = 512*10,                   # sequence length of a segment
         #     use_flash_attn = True             # whether to use flash attention
         # )
-
+        self.Frames = config.frames
         self.blocks = nn.ModuleList([
                 Trans_Block(dim = 512, num_heads = config.embedding_size//88, mlp_ratio= 4.3637)
                     for i in range(5)])
@@ -81,11 +81,27 @@ class VSeg(Blip2Base):
         
         self.fn3 = nn.Linear(512*10,512)
         self.memory = None
+        # self.head = nn.Linear(512, config.frames*2)
         self.head = nn.Linear(512, config.frames)
+
+        self.head_fc1 = nn.Linear(1024, config.frames)
+        self.head_fc2 = nn.Linear(512, 2)
         self.score_head = nn.Linear(config.embedding_size, 1)
         self.max_txt_len = config.max_txt_len
         self.cache_data = []
+        self.relu = nn.ReLU()
         # weights = [1.0, 100]
+    
+    def head_classifier(self, x):
+        
+        x = rearrange(x, 'b t c -> b c t ')
+        
+        x = self.head_fc1(x)
+        x = rearrange(x, 'b c t -> b t c')
+        x = self.head_fc2(x)
+        
+        return x 
+    
     
     def vit_to_cpu(self):
         self.ln_vision.to("cpu")
@@ -105,26 +121,6 @@ class VSeg(Blip2Base):
         x = torch.concat((interval1_embeds, interval2_embeds), dim=1)
         return x
 
-
-            
-    # def NoRMT_forward(self, interval_1,interval_2, y = None):
-        
-    #     x = self.forward_features(interval_1,interval_2)
-    #     print(x.shape)
-    #     x = self.norm(x)
-        
-    #     for block in self.blocks:
-    #         x = block(x)
-    #     print(x.shape)
-    #     x = x[:, 0]
-    #     x = self.head(x)
-    #     if y!= None:
-    #         loss_fn = nn.BCEWithLogitsLoss()
-    #         loss = loss_fn(x, y)
-    #         return x, loss
-    #     else:
-    #         return x     
-        
         
     def forward_feature(self, interval_1):
 
@@ -173,11 +169,13 @@ class VSeg(Blip2Base):
         # print('combined_feature: ', x.shape)
         for block in self.blocks:
             x = block(x)
-        # print(x.shape)
+        x = self.relu(x)
         x = x[:, 0]
+        # x = self.head_classifier(x)
         x = self.head(x)
+        # x = x.view(-1, self.Frames, 2)  # reshapes the output to (batch_size, 5, 2)
+        # x = self.relu(x)
         x = torch.sigmoid(x)
-
         return x     
     
     

@@ -92,7 +92,7 @@ def train(args):
 
     dataset = VideoDataset( root_dir='/mnt/drive1/hsun/videoSeg/data/video_datasets/CondensedMovies/new_videos')
     # dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, pin_memory=True, num_workers=8)
-    train_size = int(0.8 * len(dataset))  # 80% of the dataset
+    train_size = int(0.999 * len(dataset))  # 80% of the dataset
     test_size = len(dataset) - train_size
 
     # Split the dataset
@@ -120,10 +120,11 @@ def train(args):
         f.write(f'seting {args}' +'\n')
     train_loader = DataLoader(train_set, batch_size = 1, num_workers=8 , pin_memory = True,  prefetch_factor= 2)
     val_loader = DataLoader(test_set, batch_size = 1, num_workers=8 , pin_memory = True,)
-    pos_weight = torch.tensor([10.0])  # adjust this value as needed
+    pos_weight = torch.tensor([100.0])  # adjust this value as needed
 
-    criterion = nn.BCELoss(weight=pos_weight).cuda()
-        
+    # criterion = nn.BCELoss(weight=pos_weight).cuda()
+    criterion = nn.CrossEntropyLoss(weight  = torch.tensor([1,100]).float()).cuda()
+
     model = eval(cfg.model_name)(config.model)
     # model = torch.compile(model)
 
@@ -133,12 +134,12 @@ def train(args):
 
 
 
-    # optimizer = Lion(model.parameters(), lr=cfg.lr/3)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
+    optimizer = Lion(model.parameters(), lr=cfg.lr/3)
+    # optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
  
     scheduler = get_linear_schedule_with_warmup(
             optimizer=optimizer,
-            num_warmup_steps=20*len(train_loader) ,
+            num_warmup_steps=0*len(train_loader) ,
             num_training_steps=(len(train_loader) * cfg.epochs),
         ) 
 
@@ -159,7 +160,7 @@ def train(args):
             total_loss = 0
             with accelerator.accumulate(model):
                 frames = data['frames'].float()
-                labels = data['labels'].float()
+                labels = data['labels']
                 video_start_points = data['video_start_points'] 
                 path = data['path'] 
                 for i in range(0, frames.shape[1], interval):
@@ -168,16 +169,16 @@ def train(args):
                         gt = labels[:, i:i+interval ]
                         # print(frames_slice.shape, gt.shape)
                         pred = model(frames_slice)
-                        
-                        loss = criterion(pred, gt)
-                        # if accelerator.is_local_main_process:     
-                        #     print(pred.detach().cpu().numpy(), gt.detach().cpu().numpy(), loss.detach().cpu().numpy())
+                        if accelerator.is_local_main_process:     
+                            print(pred, gt, pred.shape, gt.shape)
+                        loss = criterion(pred.view(-1, 2), gt.view(-1))
                     # total_loss += loss
                         accelerator.backward(loss)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                         optimizer.step()
                         optimizer.zero_grad()
                         scheduler.step()
-
+     
 
 
 
@@ -190,46 +191,47 @@ def train(args):
             print('epoch {} done'.format(epoch))
 
 
-            # if epoch % cfg.test_interval  == 0 or epoch ==1 :
-            #     model.eval()
-            #     correct = 0
-            #     total = 0
-            #     with torch.no_grad():
-            #         # Loop over validation data
-            #         for index, data in enumerate(tqdm(val_loader, disable= not accelerator.is_local_main_process)):
-            #             try:
-            #                 model.clear_cache()
-            #             except:
-            #                 model.module.clear_cache()
+            if epoch % cfg.test_interval  == 0 or epoch ==1 :
+                model.eval()
+                correct = 0
+                total = 0
+                with torch.no_grad():
+                    # Loop over validation data
+                    for index, data in enumerate(tqdm(val_loader, disable= not accelerator.is_local_main_process)):
+                        try:
+                            model.clear_cache()
+                        except:
+                            model.module.clear_cache()
 
-            #             frames = data['frames'].float()
-            #             labels = data['labels'].float()
-            #             video_start_points = data['video_start_points'] 
-            #             path = data['path'] 
+                        frames = data['frames'].float()
+                        labels = data['labels'].float()
+                        video_start_points = data['video_start_points'] 
+                        path = data['path'] 
 
-            #             for i in range(0, frames.shape[1], interval):
-            #                 if i + interval <= frames.shape[1]:
-            #                     frames_slice = frames[:, i:i+interval, :, :, :]
-            #                     gt = labels[:, i:i+interval]
+                        for i in range(0, frames.shape[1], interval):
+                            if i + interval <= frames.shape[1]:
+                                frames_slice = frames[:, i:i+interval, :, :, :]
+                                gt = labels[:, i:i+interval]
 
-            #                     # Forward pass
-            #                     outputs = model(frames_slice)
-            #                     # Convert outputs probabilities to predicted class (0 or 1)
-            #                     predicted = (outputs > 0.2).float()
-            #                     # print(outputs.cpu().numpy(), predicted.cpu().numpy(), gt.cpu().numpy())
-            #                     gt_positive = gt[0] == 1
-            #                     gt_positive = gt_positive.float()
+                                # Forward pass
+                                outputs = model(frames_slice)
+                                # if accelerator.is_local_main_process:     
+                                #     print(outputs, gt)
+                                # Convert outputs probabilities to predicted class (0 or 1)
+                                _, predicted = torch.max(outputs, dim=2)
+                                # print(outputs.cpu().numpy(), predicted.cpu().numpy(), gt.cpu().numpy())
+                                gt_positive = gt == 1
 
-            #                     # Update total and correct counts
-            #                     total += gt_positive.sum().item()
-            #                     correct += (predicted[0][gt_positive.bool()] == gt[0][gt_positive.bool()]).sum().item()
+                                # Update total and correct counts
+                                total += gt_positive.sum().item()
+                                correct += (predicted[gt_positive] == gt[gt_positive]).sum().item()
         
 
-            #     if total > 0:
-            #         accuracy = correct / total
-            #         print(f'Accuracy for gt=1: {accuracy}')
-            #     else:
-            #         print('No positive gt in this batch')
+                if total > 0:
+                    accuracy = correct / total
+                    print(f'Accuracy for gt=1: {accuracy}')
+                else:
+                    print('No positive gt in this batch')
 
 
 if __name__ == '__main__':
@@ -240,7 +242,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-batch_size', type=int, default=8, help='batch size')
     parser.add_argument('-epochs', type=int, default=1500, help='epochs')
-    parser.add_argument('-lr', type=float, default=3e-4, help='learning rate')
+    parser.add_argument('-lr', type=float, default=4e-4, help='learning rate')
     parser.add_argument('-r', type=float, default=0.18, help='r')
     parser.add_argument('-resume', type=int, default=0, help='resume')
     parser.add_argument('-resume_path', type=str, default=False, help='resume_path')
