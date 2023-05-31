@@ -85,25 +85,26 @@ class NEP():
 
 def train(args):
 
+    with open('./config/config.json', 'r') as f:
+        config_dict = json.load(f)
 
-    accelerator = Accelerator( mixed_precision = 'fp16', kwargs_handlers=[ddp_kwargs] )
+    config = Box(config_dict)
+    
+    accelerator = Accelerator( gradient_accumulation_steps =1,  mixed_precision = 'fp16', kwargs_handlers=[ddp_kwargs] )
     np.random.seed(0)
     torch.manual_seed(0)
 
-    dataset = VideoDataset( root_dir='/mnt/drive1/brick1/hsun/videoSeg/data/video_datasets/CondensedMovies/new_videos')
+    dataset = VideoDataset( root_dir='/mnt/drive1/brick1/hsun/videoSeg/data/video_datasets/CondensedMovies/new_videos', Frames = config.model.Frames)
     # dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, pin_memory=True, num_workers=8)
-    # train_size = int(0.8 * len(dataset))  # 80% of the dataset
-    train_size = int(0.995 * len(dataset))  # 80% of the dataset
+    train_size = int(0.8 * len(dataset))  # 80% of the dataset
+    # train_size = int(0.995 * len(dataset))  # 80% of the dataset
 
     test_size = len(dataset) - train_size
 
     # Split the dataset
     train_set, test_set = random_split(dataset, [train_size, test_size])
 
-    with open('./config/config.json', 'r') as f:
-        config_dict = json.load(f)
-
-    config = Box(config_dict)
+  
 
 
     cfg= dotsi.Dict(vars(args))
@@ -122,7 +123,7 @@ def train(args):
         f.write(f'seting {args}' +'\n')
     train_loader = DataLoader(train_set, batch_size = 1, num_workers=8 , pin_memory = True,  prefetch_factor= 2)
     val_loader = DataLoader(test_set, batch_size = 1, num_workers=8 , pin_memory = True,)
-    pos_weight = torch.tensor([10.0])  # adjust this value as needed
+    pos_weight = torch.tensor([5.0])  # adjust this value as needed
 
     criterion = nn.BCELoss(weight=pos_weight).cuda()
         
@@ -145,102 +146,110 @@ def train(args):
         ) 
 
 
-    interval = 5
+    interval = config.model.Frames
     model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(model, optimizer, train_loader,val_loader, scheduler)
     os.makedirs(save_path, exist_ok=True)
-    # for epoch in  range(cfg.resume, cfg.epochs+1):
-    for epoch in  range(cfg.resume, cfg.resume+1):
+    for epoch in  range(cfg.resume, cfg.epochs+1):
+    # for epoch in  range(cfg.resume, cfg.resume+1):
 
-        # current_video = None
+        current_video = None
 
-        # model.train()
+        model.train()
     
-        # for index,data in enumerate(tqdm(val_loader, disable= not accelerator.is_local_main_process)):
-        #     try:
-        #         model.clear_cache()
-        #     except:
-        #         model.module.clear_cache()
-        #     total_loss = 0
-        #     with accelerator.accumulate(model):
-        #         frames = data['frames'].float()
-        #         labels = data['labels'].float()
-        #         video_start_points = data['video_start_points'] 
-        #         path = data['path'] 
-        #         for i in range(0, frames.shape[1], interval):
-        #             if i + interval <= frames.shape[1]:
-        #                 frames_slice = frames[:, i:i+interval, :, :, :]
-        #                 gt = labels[:, i:i+interval ]
-        #                 # print(frames_slice.shape, gt.shape)
-        #                 pred = model(frames_slice)
+        for index,data in enumerate(tqdm(train_set, disable= not accelerator.is_local_main_process)):
+            try:
+                model.clear_cache()
+            except:
+                model.module.clear_cache()
+            total_loss = 0
+            with accelerator.accumulate(model):
+                frames = data['frames'].float()
+                labels = data['labels'].float()
+                video_start_points = data['video_start_points'] 
+                path = data['path'] 
+                for i in range(0, frames.shape[1], interval):
+                    if i + interval <= frames.shape[1]:
+                        current_frames_slice = frames[:, i:i+interval, :, :, :]
+                        feature_frames_slice = frames[:, i+interval:i+interval+interval, :, :, :]
                         
-        #                 loss = criterion(pred, gt)
-        #                 # if accelerator.is_local_main_process:     
-        #                 #     print(pred.detach().cpu().numpy(), gt.detach().cpu().numpy(), loss.detach().cpu().numpy())
-        #             # total_loss += loss
-        #                 accelerator.backward(loss)
-        #                 optimizer.step()
-        #                 optimizer.zero_grad()
-        #                 scheduler.step()
+                        if feature_frames_slice.shape[1] != current_frames_slice.shape[1]:
+                            last_frame = current_frames_slice[:, -1, :, :, :]
+                            frames_needed = current_frames_slice.shape[1] - feature_frames_slice.shape[1]
+                            last_frames = last_frame.repeat(1, frames_needed, 1, 1, 1)
+                            feature_frames_slice = torch.cat((feature_frames_slice, last_frames), dim=1)
+            
+            
+                        gt = labels[:, i:i+interval ]
+                        pred = model(current_frames_slice, feature_frames_slice)
+                        
+                        loss = criterion(pred, gt)
+                        # if accelerator.is_local_main_process:     
+                        #     print(pred.detach().cpu().numpy(), gt.detach().cpu().numpy(), loss.detach().cpu().numpy())
+                    # total_loss += loss
+                        accelerator.backward(loss)
+                        optimizer.step()
+                        optimizer.zero_grad()
+                        scheduler.step()
 
 
 
-
-        # if accelerator.is_local_main_process:     
-        #     if epoch % cfg.save_interval == 0 :
-        #         torch.save(model.module.state_dict(), os.path.join(save_path, f'{cfg.prefix}_{cfg.model_name}_{epoch}.pth'))
-        #         nep.run['save_path'].log(os.path.join(save_path, f'{cfg.prefix}_{cfg.model_name}_{epoch}.pth'))
-
-        #     torch.save(model.module.state_dict(), os.path.join(save_path, f'last.pth'))
-        #     print('epoch {} done'.format(epoch))
 
         if accelerator.is_local_main_process:     
-            if epoch % cfg.test_interval  == 0 or epoch ==1 :
-                model.eval()
-                correct = 0
-                total = 0
-                with torch.no_grad():
-                    # Loop over validation data
-                    for index, data in enumerate(tqdm(val_loader, disable= not accelerator.is_local_main_process)):
-                        try:
-                            model.clear_cache()
-                        except:
-                            model.module.clear_cache()
+            if epoch % cfg.save_interval == 0 :
+                torch.save(model.module.state_dict(), os.path.join(save_path, f'{cfg.prefix}_{cfg.model_name}_{epoch}.pth'))
+                nep.run['save_path'].log(os.path.join(save_path, f'{cfg.prefix}_{cfg.model_name}_{epoch}.pth'))
 
-                        frames = data['frames'].float()
-                        labels = data['labels'].float()
-                        video_start_points = data['video_start_points'] 
-                        path = data['path'] 
+            torch.save(model.module.state_dict(), os.path.join(save_path, f'last.pth'))
+            print('epoch {} done'.format(epoch))
 
-                        for i in range(0, frames.shape[1], interval):
-                            if i + interval <= frames.shape[1]:
-                                frames_slice = frames[:, i:i+interval, :, :, :]
-                                gt = labels[:, i:i+interval]
+        # if accelerator.is_local_main_process:     
+        #     if epoch % cfg.test_interval  == 0 or epoch ==1 :
+        #         model.eval()
+        #         correct = 0
+        #         total = 0
+        #         with torch.no_grad():
+        #             # Loop over validation data
+        #             for index, data in enumerate(tqdm(val_loader, disable= not accelerator.is_local_main_process)):
+        #                 try:
+        #                     model.clear_cache()
+        #                 except:
+        #                     model.module.clear_cache()
 
-                                # Forward pass
-                                outputs = model(frames_slice)
-                                # Convert outputs probabilities to predicted class (0 or 1)
-                                predicted = (outputs > 0.2).float()
-                                print(predicted,gt)
-                                # print(outputs.cpu().numpy(), predicted.cpu().numpy(), gt.cpu().numpy())
-                                gt_positive = gt[0] == 1
-                                gt_positive = gt_positive.float()
+        #                 frames = data['frames'].float()
+        #                 labels = data['labels'].float()
+        #                 video_start_points = data['video_start_points'] 
+        #                 path = data['path'] 
 
-                                # Update total and correct counts
-                                total += gt_positive.sum().item()
-                                correct += (predicted[0][gt_positive.bool()] == gt[0][gt_positive.bool()]).sum().item()
+        #                 for i in range(0, frames.shape[1], interval):
+        #                     if i + interval <= frames.shape[1]:
+        #                         frames_slice = frames[:, i:i+interval, :, :, :]
+        #                         gt = labels[:, i:i+interval]
+
+        #                         # Forward pass
+        #                         outputs = model(frames_slice)
+        #                         # Convert outputs probabilities to predicted class (0 or 1)
+        #                         predicted = (outputs > 0.2).float()
+        #                         print(predicted,gt)
+        #                         # print(outputs.cpu().numpy(), predicted.cpu().numpy(), gt.cpu().numpy())
+        #                         gt_positive = gt[0] == 1
+        #                         gt_positive = gt_positive.float()
+
+        #                         # Update total and correct counts
+        #                         total += gt_positive.sum().item()
+        #                         correct += (predicted[0][gt_positive.bool()] == gt[0][gt_positive.bool()]).sum().item()
         
 
-                if total > 0:
-                    accuracy = correct / total
-                    print(f'Accuracy for gt=1: {accuracy}')
-                else:
-                    print('No positive gt in this batch')
+        #         if total > 0:
+        #             accuracy = correct / total
+        #             print(f'Accuracy for gt=1: {accuracy}')
+        #         else:
+        #             print('No positive gt in this batch')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-data_dir', type=str, default='/home/notebook/data/personal/USS00063/prepare_data/', help=' data_dir')
-    parser.add_argument('-model_name', type=str, default='VSeg', help='GIANet,UNet_dummy1,BRDNet')
+    parser.add_argument('-model_name', type=str, default='VSegv2', help='GIANet,UNet_dummy1,BRDNet')
     parser.add_argument('-fp16', action='store_true', default=False)
 
     parser.add_argument('-batch_size', type=int, default=8, help='batch size')

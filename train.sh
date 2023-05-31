@@ -1,1 +1,1 @@
-accelerate launch  --config_file config/acc_config.yaml train.py -resume 2 -resume_path /mnt/drive1/brick1/hsun/videoSeg/saved_model/VSeg_full_training_set_2023-05-29/last.pth
+accelerate launch  --config_file config/acc_config.yaml train.py

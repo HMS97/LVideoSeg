@@ -91,9 +91,13 @@ def train(args):
     torch.manual_seed(0)
 
     test_set = Test_VideoDataset( root_dir='/mnt/drive1/brick1/hsun/videoSeg/data/test_folder')
+  
+    # dataset = VideoDataset( root_dir='/mnt/drive1/brick1/hsun/videoSeg/data/video_datasets/CondensedMovies/new_videos')
     # dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, pin_memory=True, num_workers=8)
-    # train_size = int(0.8 * len(dataset))  # 80% of the dataset
-
+    # train_size = int(0.995 * len(dataset))  # 80% of the dataset
+    # test_size = len(dataset) - train_size
+    # Split the dataset
+    # train_set, test_set = random_split(dataset, [train_size, test_size])
 
     with open('./config/config.json', 'r') as f:
         config_dict = json.load(f)
@@ -116,13 +120,54 @@ def train(args):
         model.load_state_dict(torch.load(cfg.resume_path), strict=False)
         print(f'resume loaded model from {cfg.resume_path}')
 
-
     val_loader = DataLoader(test_set, batch_size = 1, num_workers=8 , pin_memory = True,)
+
+    # val_loader = DataLoader(test_set, batch_size = 1, num_workers=8 , pin_memory = True,)
 
     interval = 5
     model,val_loader = accelerator.prepare(model, val_loader)
     os.makedirs(save_path, exist_ok=True)
-  
+
+    # model.eval()
+    # correct = 0
+    # total = 0
+    # with torch.no_grad():
+    #     # Loop over validation data
+    #     for index, data in enumerate(tqdm(val_loader, disable= not accelerator.is_local_main_process)):
+    #         try:
+    #             model.clear_cache()
+    #         except:
+    #             model.module.clear_cache()
+
+    #         frames = data['frames'].float()
+    #         labels = data['labels'].float()
+    #         video_start_points = data['video_start_points'] 
+    #         path = data['path'] 
+
+    #         for i in range(0, frames.shape[1], interval):
+    #             if i + interval <= frames.shape[1]:
+    #                 frames_slice = frames[:, i:i+interval, :, :, :]
+    #                 gt = labels[:, i:i+interval]
+
+    #                 # Forward pass
+    #                 outputs = model(frames_slice)
+    #                 # Convert outputs probabilities to predicted class (0 or 1)
+    #                 predicted = (outputs > 0.2).float()
+    #                 print(predicted,gt)
+    #                 # print(outputs.cpu().numpy(), predicted.cpu().numpy(), gt.cpu().numpy())
+    #                 gt_positive = gt[0] == 1
+    #                 gt_positive = gt_positive.float()
+
+    #                 # Update total and correct counts
+    #                 total += gt_positive.sum().item()
+    #                 correct += (predicted[0][gt_positive.bool()] == gt[0][gt_positive.bool()]).sum().item()
+
+    # if total > 0:
+    #     accuracy = correct / total
+    #     print(f'Accuracy for gt=1: {accuracy}')
+    # else:
+    #     print('No positive gt in this batch')
+        
 
     model.eval()
     result = []
@@ -141,7 +186,7 @@ def train(args):
 
             for i in range(0, frames.shape[1], interval):
                 if i + interval <= frames.shape[1]:
-                    print(i,i+5)
+                    # print(i,i+5)
                     frames_slice = frames[:, i:i+interval, :, :, :]
                     # gt = labels[:, i:i+interval]
 
@@ -150,9 +195,12 @@ def train(args):
                     # Convert outputs probabilities to predicted class (0 or 1)
                     predicted = (outputs > 0.2).float()
                     # print(predicted)
-                    result.extend(predicted.cpu().numpy().tolist())
+                    result.extend(predicted.cpu().numpy().tolist()[0])
     # print(result)
-
+    #print the index of the frame that is predicted as 1 
+    
+    print([i for i in range(len(result)) if result[i] == 1 ])
+# index_list = [i for i in range(len(b)) if b[i] == 1]
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-data_dir', type=str, default='/home/notebook/data/personal/USS00063/prepare_data/', help=' data_dir')
@@ -164,7 +212,7 @@ if __name__ == '__main__':
     parser.add_argument('-lr', type=float, default=3e-4, help='learning rate')
     parser.add_argument('-r', type=float, default=0.18, help='r')
     parser.add_argument('-resume', type=int, default=1, help='resume')
-    parser.add_argument('-resume_path', type=str, default='/mnt/drive1/brick1/hsun/videoSeg/saved_model/VSeg_full_training_set_2023-05-29/last.pth', help='resume_path')
+    parser.add_argument('-resume_path', type=str, default='/mnt/drive1/brick1/hsun/videoSeg/saved_model/VSeg_full_training_set_2023-05-30/last.pth', help='resume_path')
     parser.add_argument('-return_loss', action='store_true', help='#nep',default=True)
     parser.add_argument('-frames', type=int, default=3, help='frames as denoising input')
     parser.add_argument('-test_interval', type=int, default=1, help='epoch')

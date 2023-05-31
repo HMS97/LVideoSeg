@@ -16,7 +16,7 @@ except:
     from RMT import RecurrentMemoryTransformer
 
 
-class VSeg(Blip2Base):
+class VSegv2(Blip2Base):
     """
     VideoChat model.
     """
@@ -143,7 +143,7 @@ class VSeg(Blip2Base):
     
 
     
-    def forward(self, interval_1):
+    def forward(self, interval_1,interval_2):
         
         vit_feature = self.forward_feature(interval_1)
         vit_feature = self.norm(vit_feature)
@@ -153,6 +153,15 @@ class VSeg(Blip2Base):
         vit_feature = self.fn2(vit_feature)                    # decrease the patch number from 1286 to 512
         out_vit_feature = rearrange(vit_feature, 'b l c -> b c l' ) # ( feature vector, patch number) -> (patch number, feature vector) 
           
+
+        feature_vit_feature = self.forward_feature(interval_2)
+        feature_vit_feature = self.norm(feature_vit_feature)
+        feature_vit_feature = self.fn1(feature_vit_feature)
+        feature_vit_feature = rearrange(feature_vit_feature, 'b c l -> b l c') # (patch number, feature vector) -> ( feature vector, patch number)
+        feature_vit_feature = self.fn2(feature_vit_feature)                    # decrease the patch number from 1286 to 512
+        feature_out_vit_feature = rearrange(feature_vit_feature, 'b l c -> b c l' ) # ( feature vector, patch number) -> (patch number, feature vector) 
+          
+
 
 
         if len(self.cache_data) == 0:
@@ -165,7 +174,7 @@ class VSeg(Blip2Base):
         # RMT_feature = self.RMT_forward(out_vit_feature)
         # x = torch.cat((RMT_feature, Prev_feature, out_vit_feature), dim = 1)
 
-        x = torch.cat(( Prev_feature, out_vit_feature), dim = 1)
+        x = torch.cat(( Prev_feature, out_vit_feature,feature_out_vit_feature), dim = 1)
         # print('combined_feature: ', x.shape)
         for block in self.blocks:
             x = block(x)
@@ -183,15 +192,15 @@ if __name__ == '__main__':
     import json
     from box import Box
 
-    with open('/mnt/drive1/hsun/videoSeg/config/config.json', 'r') as f:
+    with open('/mnt/drive1/brick1/hsun/videoSeg/config/config.json', 'r') as f:
         config_dict = json.load(f)
 
     config = Box(config_dict)
-    model = VSeg(config.model).cuda()
+    model = VSegv2(config.model).cuda()
     for i in range(3):
         video = torch.rand(1, 5, 3,  224, 224).cuda()
 
         print(video.shape)
-        output = model(video)
+        output = model(video,video)
 
         print(output.shape)
