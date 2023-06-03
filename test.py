@@ -185,13 +185,15 @@ def train(args):
             # path = data['path'] 
 
             for i in range(0, frames.shape[1], interval):
-                if i + interval <= frames.shape[1]:
+                if i + interval <= frames.shape[1]-10:
                     # print(i,i+5)
                     frames_slice = frames[:, i:i+interval, :, :, :]
                     # gt = labels[:, i:i+interval]
+                    feature_frames_slice = frames[:, i+interval:i+interval+interval, :, :, :]
 
                     # Forward pass
-                    outputs = model(frames_slice)
+                    outputs = model(frames_slice,feature_frames_slice)
+                    print(outputs)
                     # Convert outputs probabilities to predicted class (0 or 1)
                     predicted = (outputs > 0.2).float()
                     # print(predicted)
@@ -204,7 +206,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-data_dir', type=str, default='/home/notebook/data/personal/USS00063/prepare_data/', help=' data_dir')
-    parser.add_argument('-model_name', type=str, default='VSeg', help='GIANet,UNet_dummy1,BRDNet')
+    parser.add_argument('-model_name', type=str, default='VSegv3', help='GIANet,UNet_dummy1,BRDNet')
     parser.add_argument('-fp16', action='store_true', default=False)
 
     parser.add_argument('-batch_size', type=int, default=8, help='batch size')
@@ -212,7 +214,7 @@ if __name__ == '__main__':
     parser.add_argument('-lr', type=float, default=3e-4, help='learning rate')
     parser.add_argument('-r', type=float, default=0.18, help='r')
     parser.add_argument('-resume', type=int, default=1, help='resume')
-    parser.add_argument('-resume_path', type=str, default='/mnt/drive1/brick1/hsun/videoSeg/saved_model/VSeg_full_training_set_2023-05-30/last.pth', help='resume_path')
+    parser.add_argument('-resume_path', type=str, default='/mnt/drive1/brick1/hsun/videoSeg/saved_model/VSegv2_full_training_set_2023-05-31/last.pth', help='resume_path')
     parser.add_argument('-return_loss', action='store_true', help='#nep',default=True)
     parser.add_argument('-frames', type=int, default=3, help='frames as denoising input')
     parser.add_argument('-test_interval', type=int, default=1, help='epoch')

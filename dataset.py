@@ -28,12 +28,12 @@ class VideoDataset(Dataset):
         for start, end in sliced_list:
             location_label_list.extend(labels[start:end+1])
             location_frame_list.extend(frames[start:end+1])
-        
         location_frame_list = [read_image(i) for i in location_frame_list]
         location_frame_list = [torch.nn.functional.interpolate(i.unsqueeze(0), size=224).squeeze(0) for i in location_frame_list]
        
         
         data['frames'] = torch.stack(location_frame_list)
+        # print('dat frame .shape', data['frames'].shape)
         data['labels'] = torch.tensor(location_label_list)
         data['video_start_points'] = video_start_points
         data['path'] = self.videos[idx]

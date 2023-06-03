@@ -96,7 +96,7 @@ def train(args):
 
     dataset = VideoDataset( root_dir='/mnt/drive1/brick1/hsun/videoSeg/data/video_datasets/CondensedMovies/new_videos', Frames = config.model.Frames)
     # dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, pin_memory=True, num_workers=8)
-    train_size = int(0.8 * len(dataset))  # 80% of the dataset
+    train_size = int(0.995 * len(dataset))  # 80% of the dataset
     # train_size = int(0.995 * len(dataset))  # 80% of the dataset
 
     test_size = len(dataset) - train_size
@@ -123,7 +123,7 @@ def train(args):
         f.write(f'seting {args}' +'\n')
     train_loader = DataLoader(train_set, batch_size = 1, num_workers=8 , pin_memory = True,  prefetch_factor= 2)
     val_loader = DataLoader(test_set, batch_size = 1, num_workers=8 , pin_memory = True,)
-    pos_weight = torch.tensor([5.0])  # adjust this value as needed
+    pos_weight = torch.tensor([0.5])  # adjust this value as needed
 
     criterion = nn.BCELoss(weight=pos_weight).cuda()
         
@@ -139,12 +139,7 @@ def train(args):
     # optimizer = Lion(model.parameters(), lr=cfg.lr/3)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
  
-    scheduler = get_linear_schedule_with_warmup(
-            optimizer=optimizer,
-            num_warmup_steps=20*len(train_loader) ,
-            num_training_steps=(len(train_loader) * cfg.epochs),
-        ) 
-
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10*len(train_loader), gamma=0.95)
 
     interval = config.model.Frames
     model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(model, optimizer, train_loader,val_loader, scheduler)
@@ -156,40 +151,39 @@ def train(args):
 
         model.train()
     
-        for index,data in enumerate(tqdm(train_set, disable= not accelerator.is_local_main_process)):
+        for index,data in enumerate(tqdm(train_loader, disable= not accelerator.is_local_main_process)):
             try:
                 model.clear_cache()
             except:
                 model.module.clear_cache()
             total_loss = 0
             with accelerator.accumulate(model):
-                frames = data['frames'].float()
-                labels = data['labels'].float()
+                frames = data['frames'].float().cuda()
+                labels = data['labels'].float().cuda()
                 video_start_points = data['video_start_points'] 
                 path = data['path'] 
                 for i in range(0, frames.shape[1], interval):
+                    # print(i+interval , frames.shape)
                     if i + interval <= frames.shape[1]:
+      
                         current_frames_slice = frames[:, i:i+interval, :, :, :]
-                        feature_frames_slice = frames[:, i+interval:i+interval+interval, :, :, :]
-                        
-                        if feature_frames_slice.shape[1] != current_frames_slice.shape[1]:
-                            last_frame = current_frames_slice[:, -1, :, :, :]
-                            frames_needed = current_frames_slice.shape[1] - feature_frames_slice.shape[1]
-                            last_frames = last_frame.repeat(1, frames_needed, 1, 1, 1)
-                            feature_frames_slice = torch.cat((feature_frames_slice, last_frames), dim=1)
-            
-            
-                        gt = labels[:, i:i+interval ]
-                        pred = model(current_frames_slice, feature_frames_slice)
-                        
-                        loss = criterion(pred, gt)
-                        # if accelerator.is_local_main_process:     
-                        #     print(pred.detach().cpu().numpy(), gt.detach().cpu().numpy(), loss.detach().cpu().numpy())
-                    # total_loss += loss
-                        accelerator.backward(loss)
-                        optimizer.step()
-                        optimizer.zero_grad()
-                        scheduler.step()
+                        # gt = labels[:, i:i+interval ]
+                        if i == 0 or interval:
+                            gt = labels[:, i:i+interval ]
+                        else:
+                            gt = labels[:, i-interval:i ]
+
+                        pred = model(current_frames_slice)
+                        if i > 2*interval:
+                            loss = criterion(pred, gt) + 1e-6
+                            # if accelerator.is_local_main_process:     
+                            #     print(pred.detach().cpu().numpy(), gt.detach().cpu().numpy(), loss.detach().cpu().numpy())
+                        # total_loss += loss
+                            accelerator.backward(loss)
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                            optimizer.step()
+                            optimizer.zero_grad()
+                            scheduler.step()
 
 
 
@@ -200,7 +194,7 @@ def train(args):
                 nep.run['save_path'].log(os.path.join(save_path, f'{cfg.prefix}_{cfg.model_name}_{epoch}.pth'))
 
             torch.save(model.module.state_dict(), os.path.join(save_path, f'last.pth'))
-            print('epoch {} done'.format(epoch))
+            print('epoch {} done'.format(epoch), os.path.join(save_path, f'last.pth'))
 
         # if accelerator.is_local_main_process:     
         #     if epoch % cfg.test_interval  == 0 or epoch ==1 :
@@ -249,12 +243,12 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-data_dir', type=str, default='/home/notebook/data/personal/USS00063/prepare_data/', help=' data_dir')
-    parser.add_argument('-model_name', type=str, default='VSegv2', help='GIANet,UNet_dummy1,BRDNet')
+    parser.add_argument('-model_name', type=str, default='VSegv3', help='GIANet,UNet_dummy1,BRDNet')
     parser.add_argument('-fp16', action='store_true', default=False)
 
     parser.add_argument('-batch_size', type=int, default=8, help='batch size')
     parser.add_argument('-epochs', type=int, default=1500, help='epochs')
-    parser.add_argument('-lr', type=float, default=3e-4, help='learning rate')
+    parser.add_argument('-lr', type=float, default=1e-4, help='learning rate')
     parser.add_argument('-r', type=float, default=0.18, help='r')
     parser.add_argument('-resume', type=int, default=0, help='resume')
     parser.add_argument('-resume_path', type=str, default=False, help='resume_path')

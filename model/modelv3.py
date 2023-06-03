@@ -12,11 +12,11 @@ try:
     from .RMT import RecurrentMemoryTransformer
 except:
     from blip2 import Blip2Base, disabled_train
-    from videoSeg.model.eva_vit import Trans_Block
+    from eva_vit import Trans_Block
     from RMT import RecurrentMemoryTransformer
 
 
-class VSegv2(Blip2Base):
+class VSegv3(Blip2Base):
     """
     VideoChat model.
     """
@@ -77,7 +77,7 @@ class VSegv2(Blip2Base):
         self.norm = nn.LayerNorm(config.embedding_size)
         self.fc_norm = nn.LayerNorm(config.embedding_size)
         self.fn1 =nn.Linear(1408,512)  #feature number from 1408 to 512
-        self.fn2 = nn.Linear(1286,512) #patch number from 1286 to 512
+        self.fn2 = nn.Linear(1286,256) #patch number from 1286 to 512
         
         # self.fn3 = nn.Linear(512*10,512)
         self.memory = None
@@ -143,9 +143,9 @@ class VSegv2(Blip2Base):
     
 
     
-    def forward(self, interval_1,interval_2):
+    def forward(self, future_interval):
         
-        vit_feature = self.forward_feature(interval_1)
+        vit_feature = self.forward_feature(future_interval)
         vit_feature = self.norm(vit_feature)
 
         vit_feature = self.fn1(vit_feature)
@@ -154,27 +154,30 @@ class VSegv2(Blip2Base):
         out_vit_feature = rearrange(vit_feature, 'b l c -> b c l' ) # ( feature vector, patch number) -> (patch number, feature vector) 
           
 
-        feature_vit_feature = self.forward_feature(interval_2)
-        feature_vit_feature = self.norm(feature_vit_feature)
-        feature_vit_feature = self.fn1(feature_vit_feature)
-        feature_vit_feature = rearrange(feature_vit_feature, 'b c l -> b l c') # (patch number, feature vector) -> ( feature vector, patch number)
-        feature_vit_feature = self.fn2(feature_vit_feature)                    # decrease the patch number from 1286 to 512
-        feature_out_vit_feature = rearrange(feature_vit_feature, 'b l c -> b c l' ) # ( feature vector, patch number) -> (patch number, feature vector) 
-          
 
 
 
         if len(self.cache_data) == 0:
             self.cache_data.append(out_vit_feature.detach().cpu())
-            Prev_feature = torch.zeros_like(out_vit_feature)
-        else:   
-            Prev_feature = (self.cache_data.pop()).cuda()
+            Prev_feature = out_vit_feature.detach()
+            Current_feature = out_vit_feature.detach()
+
+        elif len(self.cache_data) == 1:   
             self.cache_data.append(out_vit_feature.detach().cpu())
+            Prev_feature =  self.cache_data[0].cuda()
+            Current_feature = out_vit_feature.detach()
+
+        elif len(self.cache_data) == 2:
+            self.cache_data.append(out_vit_feature.detach().cpu())
+            self.cache_data.pop(0)
+            Prev_feature = self.cache_data[0].cuda()
+            Current_feature = self.cache_data[1].cuda()
+
 
         # RMT_feature = self.RMT_forward(out_vit_feature)
         # x = torch.cat((RMT_feature, Prev_feature, out_vit_feature), dim = 1)
 
-        x = torch.cat(( Prev_feature, out_vit_feature,feature_out_vit_feature), dim = 1)
+        x = torch.cat(( Prev_feature, Current_feature, out_vit_feature), dim = 1)
         # print('combined_feature: ', x.shape)
         for block in self.blocks:
             x = block(x)
@@ -196,11 +199,10 @@ if __name__ == '__main__':
         config_dict = json.load(f)
 
     config = Box(config_dict)
-    model = VSegv2(config.model).cuda()
+    model = VSegv3(config.model).cuda()
     for i in range(3):
         video = torch.rand(1, 5, 3,  224, 224).cuda()
 
-        print(video.shape)
-        output = model(video,video)
+        output = model(video)
 
         print(output.shape)

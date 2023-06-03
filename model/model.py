@@ -12,7 +12,7 @@ try:
     from .RMT import RecurrentMemoryTransformer
 except:
     from blip2 import Blip2Base, disabled_train
-    from eva_vit import Trans_Block
+    from videoSeg.model.eva_vit import Trans_Block
     from RMT import RecurrentMemoryTransformer
 
 
